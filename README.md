@@ -1,2 +1,3 @@
-# nost-monitor
-New Observing Strategies Testbed (NOS-T) Monitor Application
+# nost-monitor-backend
+
+Monitor Backend for the New Observing Strategies Testbed (NOS-T)
