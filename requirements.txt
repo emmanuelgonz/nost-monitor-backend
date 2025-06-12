@@ -1,4 +1,4 @@
 fastapi>=0.111.0,<0.112.0
-nost_tools @ git+https://github.com/code-lab-org/nost-tools@v1.1.5
+nost_tools >=2.3.0
 pydantic>=2.7.0,<3.0.0
 python-dotenv>=1.0.1

@@ -5,8 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
-
-from nost_tools.application_utils import ConnectionConfig
+from nost_tools.configuration import ConnectionConfig
 from nost_tools.manager import Manager
 
 from .schemas import (
@@ -45,11 +44,18 @@ app.add_middleware(
 # load environment variables from the .env file
 load_dotenv()
 config = ConnectionConfig(
-    os.getenv("CLIENT_USERNAME", "monitor"),
-    os.getenv("CLIENT_PASSWORD"),
-    os.getenv("BROKER_HOST"),
-    int(os.getenv("BROKER_PORT", 8883)),
-    True,
+    username=os.getenv("USERNAME"),
+    password=os.getenv("PASSWORD"),
+    rabbitmq_host=os.getenv("RABBITMQ_HOST"),
+    rabbitmq_port=os.getenv("RABBITMQ_PORT"),
+    keycloak_authentication=os.getenv("KEYCLOAK_AUTHENTICATION").lower() == "true",
+    keycloak_host=os.getenv("KEYCLOAK_HOST"),
+    keycloak_port=os.getenv("KEYCLOAK_PORT"),
+    keycloak_realm=os.getenv("KEYCLOAK_REALM"),
+    client_id=os.getenv("CLIENT_ID"),
+    client_secret_key=os.getenv("CLIENT_SECRET_KEY"),
+    virtual_host=os.getenv("VIRTUAL_HOST"),
+    is_tls=os.getenv("IS_TLS").lower() == "true",
 )
 
 MANAGERS = {}
@@ -59,13 +65,15 @@ def get_manager(prefix):
     if prefix in MANAGERS:
         return MANAGERS[prefix]
     else:
-        MANAGERS[prefix] = Manager()
-        MANAGERS[prefix].start_up(prefix, config, True)
+        MANAGERS[prefix] = Manager(setup_signal_handlers=False)
+        MANAGERS[prefix].start_up(prefix, config)
         return MANAGERS[prefix]
+
 
 @app.get("/", include_in_schema=False)
 async def docs_redirect():
-    return RedirectResponse(url='/docs')
+    return RedirectResponse(url="/docs")
+
 
 @app.get("/status/{prefix}", tags=["manager"], response_class=PlainTextResponse)
 def get_scenario_mode(prefix: str):
