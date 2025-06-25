@@ -28,11 +28,14 @@ app = FastAPI(
     description="Provides a RESTful HTTP interface to NOS-T manager functions.",
     version=__version__,
 )
-origins = [
-    "http://localhost",
-    "http://localhost:8000",
-]
-# configure CORS middleware
+
+# load environment variables from the .env file
+load_dotenv()
+
+# Configure CORS middleware
+cors_origins = os.getenv("CORS_ORIGINS", "").split(",")
+origins = [origin.strip() for origin in cors_origins]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -41,8 +44,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# load environment variables from the .env file
-load_dotenv()
 config = ConnectionConfig(
     username=os.getenv("USERNAME"),
     password=os.getenv("PASSWORD"),
