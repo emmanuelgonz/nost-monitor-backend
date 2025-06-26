@@ -1,10 +1,9 @@
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from nost_tools import manager
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
-
-from nost_tools import manager
 
 
 class InitRequest(BaseModel):
@@ -47,7 +46,7 @@ class StartRequest(BaseModel):
         description="Number of scenario seconds per wallclock second (greater than 1 is faster than real-time).",
     )
     time_status_step: Optional[timedelta] = Field(
-        None,
+        timedelta(seconds=10),
         description="Scenario time interval between time status (heartbeat) messages.",
     )
     time_status_init: Optional[datetime] = Field(
