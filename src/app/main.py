@@ -2,12 +2,13 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from nost_tools.configuration import ConnectionConfig
 from nost_tools.manager import Manager
 
+from .auth import require_auth, require_role
 from .schemas import (
     ExecuteRequest,
     InitRequest,
@@ -77,7 +78,7 @@ async def docs_redirect():
 
 
 @app.get("/status/{prefix}", tags=["manager"], response_class=PlainTextResponse)
-def get_scenario_mode(prefix: str):
+def get_scenario_mode(prefix: str, _claims: dict = Depends(require_auth)):
     """
     Reports the current scenario execution mode for a prefix.
     """
@@ -85,7 +86,11 @@ def get_scenario_mode(prefix: str):
 
 
 @app.post("/init/{prefix}", tags=["manager"])
-def run_init_command(prefix: str, request: InitRequest):
+def run_init_command(
+    prefix: str,
+    request: InitRequest,
+    _claims: dict = Depends(require_role("nost_sudo")),
+):
     """
     Issues the init command to initialize a new scenario execution.
     """
@@ -98,7 +103,11 @@ def run_init_command(prefix: str, request: InitRequest):
 
 
 @app.post("/start/{prefix}", tags=["manager"])
-def run_start_command(prefix: str, request: StartRequest):
+def run_start_command(
+    prefix: str,
+    request: StartRequest,
+    _claims: dict = Depends(require_role("nost_sudo")),
+):
     """
     Issues the start command to start a new scenario execution.
     """
@@ -117,7 +126,11 @@ def run_start_command(prefix: str, request: StartRequest):
 
 
 @app.post("/stop/{prefix}", tags=["manager"])
-def run_stop_command(prefix: str, request: StopRequest):
+def run_stop_command(
+    prefix: str,
+    request: StopRequest,
+    _claims: dict = Depends(require_role("nost_sudo")),
+):
     """
     Issues the stop command to stop a scenario execution.
     """
@@ -128,7 +141,11 @@ def run_stop_command(prefix: str, request: StopRequest):
 
 
 @app.post("/update/{prefix}", tags=["manager"])
-def run_update_command(prefix: str, request: UpdateRequest):
+def run_update_command(
+    prefix: str,
+    request: UpdateRequest,
+    _claims: dict = Depends(require_role("nost_sudo")),
+):
     """
     Issues the update command to change the time scale factor of a scenario execution.
     """
@@ -139,7 +156,11 @@ def run_update_command(prefix: str, request: UpdateRequest):
 
 
 @app.post("/testScript/{prefix}", tags=["manager"])
-def execute_text_plan(prefix: str, request: ExecuteRequest):
+def execute_text_plan(
+    prefix: str,
+    request: ExecuteRequest,
+    _claims: dict = Depends(require_role("nost_sudo")),
+):
     """
     Executes a test plan to manage the end-to-end scenario execution.
     """
