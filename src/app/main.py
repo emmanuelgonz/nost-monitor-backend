@@ -51,7 +51,7 @@ def _build_config() -> ConnectionConfig:
         keycloak_port=int(os.getenv("KEYCLOAK_PORT", "8443")),
         keycloak_realm=os.getenv("KEYCLOAK_REALM"),
         client_id=os.getenv("CLIENT_ID"),
-        virtual_host=os.getenv("VIRTUAL_HOST", "/"),
+        virtual_host=os.getenv("RABBITMQ_VHOST", "/"),
         is_tls=os.getenv("IS_TLS", "true").lower() == "true",
     )
 
