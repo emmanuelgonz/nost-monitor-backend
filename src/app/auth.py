@@ -1,4 +1,5 @@
 import os
+import ssl
 import time
 
 import httpx
@@ -15,6 +16,10 @@ _ISSUER = f"https://{_KEYCLOAK_HOST}:{_KEYCLOAK_PORT}/realms/{_KEYCLOAK_REALM}"
 _JWKS_URL = f"{_ISSUER}/protocol/openid-connect/certs"
 _JWKS_TTL_SECONDS = 15 * 60
 
+_insecure_ctx = ssl.create_default_context()
+_insecure_ctx.check_hostname = False
+_insecure_ctx.verify_mode = ssl.CERT_NONE
+
 _jwks_client: PyJWKClient | None = None
 _jwks_fetched_at: float = 0.0
 
@@ -23,16 +28,9 @@ def _get_jwks_client() -> PyJWKClient:
     global _jwks_client, _jwks_fetched_at
     now = time.time()
     if _jwks_client is None or (now - _jwks_fetched_at) > _JWKS_TTL_SECONDS:
-        _jwks_client = PyJWKClient(_JWKS_URL)
+        _jwks_client = PyJWKClient(_JWKS_URL, ssl_context=_insecure_ctx)
         _jwks_fetched_at = now
     return _jwks_client
-
-
-def _verify_issuer_reachable() -> None:
-    try:
-        httpx.get(f"{_ISSUER}/.well-known/openid-configuration", timeout=5.0, verify=False)
-    except Exception as err:
-        raise RuntimeError(f"Keycloak issuer unreachable at {_ISSUER}: {err}")
 
 
 def require_auth(
@@ -60,8 +58,8 @@ def require_auth(
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidIssuerError:
         raise HTTPException(status_code=401, detail="Invalid issuer")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError as err:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {err}")
 
     roles = claims.get("realm_access", {}).get("roles", [])
     if _REQUIRED_REALM_ROLE not in roles:
