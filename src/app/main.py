@@ -77,6 +77,7 @@ def get_manager(prefix: str, auth: dict) -> Manager:
     manager.start_up(
         prefix,
         _build_config(),
+        set_offset=False,
         access_token=access_token,
         refresh_token=refresh_token,
     )
