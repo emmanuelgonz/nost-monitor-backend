@@ -61,10 +61,6 @@ MANAGERS: dict[tuple[str, str], Manager] = {}
 
 def get_manager(prefix: str, auth: dict) -> Manager:
     user_sub = auth["claims"].get("sub", "unknown")
-    key = (prefix, user_sub)
-    if key in MANAGERS:
-        return MANAGERS[key]
-
     access_token = auth["access_token"]
     refresh_token = auth["refresh_token"]
     if not refresh_token:
@@ -72,6 +68,16 @@ def get_manager(prefix: str, auth: dict) -> Manager:
             status_code=400,
             detail="X-Refresh-Token header required to start a Manager session",
         )
+
+    key = (prefix, user_sub)
+    manager = MANAGERS.get(key)
+    if manager is not None:
+        manager.refresh_token = refresh_token
+        try:
+            manager.update_connection_credentials(access_token)
+        except Exception as err:
+            logger.warning("Failed to update cached Manager credentials: %s", err)
+        return manager
 
     manager = Manager(setup_signal_handlers=False)
     manager.start_up(
