@@ -7,6 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from nost_tools.configuration import ConnectionConfig
 from nost_tools.manager import Manager
+from pika.exceptions import (
+    AMQPConnectionError,
+    ChannelClosedByBroker,
+    ProbableAccessDeniedError,
+    ProbableAuthenticationError,
+    UnroutableError,
+)
 
 from .auth import require_auth
 from .schemas import (
@@ -91,6 +98,35 @@ def get_manager(prefix: str, auth: dict) -> Manager:
     return manager
 
 
+BROKER_ERRORS = (
+    ChannelClosedByBroker,
+    AMQPConnectionError,
+    UnroutableError,
+)
+
+
+def _broker_error_to_http(err: Exception) -> HTTPException:
+    if isinstance(err, ChannelClosedByBroker):
+        code = err.reply_code
+        if code == 403:
+            return HTTPException(403, f"Broker refused operation: {err.reply_text}")
+        if code == 404:
+            return HTTPException(404, f"Broker: {err.reply_text}")
+        return HTTPException(400, f"Broker rejected request: {err.reply_text}")
+    if isinstance(err, (ProbableAccessDeniedError, ProbableAuthenticationError)):
+        return HTTPException(403, f"Broker denied connection: {err}")
+    if isinstance(err, AMQPConnectionError):
+        return HTTPException(502, f"Broker unreachable: {err}")
+    if isinstance(err, UnroutableError):
+        return HTTPException(400, "Message was not routable: check prefix.")
+    return HTTPException(500, f"Unexpected broker error: {err}")
+
+
+def _evict_manager(prefix: str, auth: dict) -> None:
+    user_sub = auth["claims"].get("sub", "unknown")
+    MANAGERS.pop((prefix, user_sub), None)
+
+
 @app.get("/", include_in_schema=False)
 async def docs_redirect():
     return RedirectResponse(url="/docs")
@@ -116,6 +152,10 @@ def run_init_command(
         )
     except RuntimeError as err:
         raise HTTPException(status_code=400, detail=str(err))
+    except BROKER_ERRORS as err:
+        logger.warning("broker error on init prefix=%s: %s", prefix, err)
+        _evict_manager(prefix, auth)
+        raise _broker_error_to_http(err) from err
 
 
 @app.post("/start/{prefix}", tags=["manager"])
@@ -138,6 +178,10 @@ def run_start_command(
         )
     except RuntimeError as err:
         raise HTTPException(status_code=400, detail=str(err))
+    except BROKER_ERRORS as err:
+        logger.warning("broker error on start prefix=%s: %s", prefix, err)
+        _evict_manager(prefix, auth)
+        raise _broker_error_to_http(err) from err
 
 
 @app.post("/stop/{prefix}", tags=["manager"])
@@ -152,6 +196,10 @@ def run_stop_command(
         get_manager(prefix, auth).stop(request.sim_stop_time)
     except RuntimeError as err:
         raise HTTPException(status_code=400, detail=str(err))
+    except BROKER_ERRORS as err:
+        logger.warning("broker error on stop prefix=%s: %s", prefix, err)
+        _evict_manager(prefix, auth)
+        raise _broker_error_to_http(err) from err
 
 
 @app.post("/update/{prefix}", tags=["manager"])
@@ -166,6 +214,10 @@ def run_update_command(
         get_manager(prefix, auth).update(request.time_scale_factor, request.sim_update_time)
     except RuntimeError as err:
         raise HTTPException(status_code=400, detail=str(err))
+    except BROKER_ERRORS as err:
+        logger.warning("broker error on update prefix=%s: %s", prefix, err)
+        _evict_manager(prefix, auth)
+        raise _broker_error_to_http(err) from err
 
 
 @app.post("/testScript/{prefix}", tags=["manager"], status_code=202)
@@ -180,21 +232,31 @@ def execute_text_plan(
     logger.info("user=%s action=testScript prefix=%s submitted", user_sub, prefix)
 
     manager = get_manager(prefix, auth)
-    background_tasks.add_task(
-        manager.execute_test_plan,
-        request.sim_start_time,
-        request.sim_stop_time,
-        request.start_time,
-        request.time_step,
-        request.time_scale_factor,
-        [u.to_manager_format() for u in request.time_scale_updates],
-        request.time_status_step,
-        request.time_status_init,
-        request.command_lead,
-        request.required_apps,
-        request.init_retry_delay_s,
-        request.init_max_retry,
-    )
+
+    def _run_test_plan_safely() -> None:
+        try:
+            manager.execute_test_plan(
+                request.sim_start_time,
+                request.sim_stop_time,
+                request.start_time,
+                request.time_step,
+                request.time_scale_factor,
+                [u.to_manager_format() for u in request.time_scale_updates],
+                request.time_status_step,
+                request.time_status_init,
+                request.command_lead,
+                request.required_apps,
+                request.init_retry_delay_s,
+                request.init_max_retry,
+            )
+        except BROKER_ERRORS as err:
+            logger.warning("broker error in testScript prefix=%s: %s", prefix, err)
+            _evict_manager(prefix, auth)
+        except Exception as err:
+            logger.exception("testScript failed prefix=%s: %s", prefix, err)
+            _evict_manager(prefix, auth)
+
+    background_tasks.add_task(_run_test_plan_safely)
     return {"status": "accepted", "user": user_sub, "prefix": prefix}
 
 
