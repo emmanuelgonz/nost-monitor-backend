@@ -175,6 +175,34 @@ def _evict_manager(prefix: str, auth: dict) -> None:
         _shutdown_manager_async(manager, f"{prefix}:{user_sub}")
 
 
+@app.on_event("shutdown")
+def shutdown_cached_managers() -> None:
+    if not MANAGERS:
+        return
+    logger.info("Shutting down %d cached Manager(s)", len(MANAGERS))
+
+    def _stop_one(manager: Manager, label: str) -> None:
+        try:
+            manager.stop_application()
+        except Exception as err:
+            logger.warning("Failed to shut down Manager %s: %s", label, err)
+
+    threads: list[threading.Thread] = []
+    for key, (manager, _) in list(MANAGERS.items()):
+        label = f"{key[0]}:{key[1]}"
+        t = threading.Thread(target=_stop_one, args=(manager, label), name=f"shutdown-{label}")
+        t.start()
+        threads.append(t)
+
+    deadline = monotonic() + 12.0
+    for t in threads:
+        remaining = max(0.0, deadline - monotonic())
+        t.join(timeout=remaining)
+
+    MANAGERS.clear()
+    logger.info("Cached Manager shutdown complete.")
+
+
 @app.get("/", include_in_schema=False)
 async def docs_redirect():
     return RedirectResponse(url="/docs")
