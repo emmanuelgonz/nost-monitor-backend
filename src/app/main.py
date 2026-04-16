@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+from time import monotonic
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -63,7 +65,8 @@ def _build_config() -> ConnectionConfig:
     )
 
 
-MANAGERS: dict[tuple[str, str], Manager] = {}
+MANAGER_IDLE_TIMEOUT_S = int(os.getenv("MANAGER_IDLE_TIMEOUT_S", "1800"))
+MANAGERS: dict[tuple[str, str], tuple[Manager, float]] = {}
 
 
 def _is_manager_healthy(manager: Manager) -> bool:
@@ -71,7 +74,35 @@ def _is_manager_healthy(manager: Manager) -> bool:
     return bool(flag and flag.is_set())
 
 
+def _shutdown_manager_async(manager: Manager, label: str) -> None:
+    def _run() -> None:
+        try:
+            manager.stop_application()
+        except Exception as err:
+            logger.warning("Failed to shut down Manager %s: %s", label, err)
+
+    threading.Thread(target=_run, name=f"mgr-shutdown-{label}", daemon=True).start()
+
+
+def _evict_expired_managers() -> None:
+    now = monotonic()
+    stale = [
+        key for key, (_, last_used) in MANAGERS.items()
+        if now - last_used > MANAGER_IDLE_TIMEOUT_S
+    ]
+    for key in stale:
+        entry = MANAGERS.pop(key, None)
+        if entry is None:
+            continue
+        manager, _ = entry
+        prefix, user_sub = key
+        logger.info("Evicting idle Manager for prefix=%s user=%s", prefix, user_sub)
+        _shutdown_manager_async(manager, f"{prefix}:{user_sub}")
+
+
 def get_manager(prefix: str, auth: dict) -> Manager:
+    _evict_expired_managers()
+
     user_sub = auth["claims"].get("sub", "unknown")
     access_token = auth["access_token"]
     refresh_token = auth["refresh_token"]
@@ -82,17 +113,22 @@ def get_manager(prefix: str, auth: dict) -> Manager:
         )
 
     key = (prefix, user_sub)
-    manager = MANAGERS.get(key)
-    if manager is not None and not _is_manager_healthy(manager):
-        logger.info("Evicting unhealthy Manager for prefix=%s user=%s", prefix, user_sub)
-        MANAGERS.pop(key, None)
-        manager = None
-    if manager is not None:
+    entry = MANAGERS.get(key)
+    if entry is not None:
+        manager, _ = entry
+        if not _is_manager_healthy(manager):
+            logger.info("Evicting unhealthy Manager for prefix=%s user=%s", prefix, user_sub)
+            MANAGERS.pop(key, None)
+            _shutdown_manager_async(manager, f"{prefix}:{user_sub}")
+            entry = None
+    if entry is not None:
+        manager, _ = entry
         manager.refresh_token = refresh_token
         try:
             manager.update_connection_credentials(access_token)
         except Exception as err:
             logger.warning("Failed to update cached Manager credentials: %s", err)
+        MANAGERS[key] = (manager, monotonic())
         return manager
 
     manager = Manager(setup_signal_handlers=False)
@@ -103,7 +139,7 @@ def get_manager(prefix: str, auth: dict) -> Manager:
         access_token=access_token,
         refresh_token=refresh_token,
     )
-    MANAGERS[key] = manager
+    MANAGERS[key] = (manager, monotonic())
     return manager
 
 
@@ -133,7 +169,10 @@ def _broker_error_to_http(err: Exception) -> HTTPException:
 
 def _evict_manager(prefix: str, auth: dict) -> None:
     user_sub = auth["claims"].get("sub", "unknown")
-    MANAGERS.pop((prefix, user_sub), None)
+    entry = MANAGERS.pop((prefix, user_sub), None)
+    if entry is not None:
+        manager, _ = entry
+        _shutdown_manager_async(manager, f"{prefix}:{user_sub}")
 
 
 @app.get("/", include_in_schema=False)
