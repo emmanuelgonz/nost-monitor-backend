@@ -66,6 +66,11 @@ def _build_config() -> ConnectionConfig:
 MANAGERS: dict[tuple[str, str], Manager] = {}
 
 
+def _is_manager_healthy(manager: Manager) -> bool:
+    flag = getattr(manager, "_is_connected", None)
+    return bool(flag and flag.is_set())
+
+
 def get_manager(prefix: str, auth: dict) -> Manager:
     user_sub = auth["claims"].get("sub", "unknown")
     access_token = auth["access_token"]
@@ -78,6 +83,10 @@ def get_manager(prefix: str, auth: dict) -> Manager:
 
     key = (prefix, user_sub)
     manager = MANAGERS.get(key)
+    if manager is not None and not _is_manager_healthy(manager):
+        logger.info("Evicting unhealthy Manager for prefix=%s user=%s", prefix, user_sub)
+        MANAGERS.pop(key, None)
+        manager = None
     if manager is not None:
         manager.refresh_token = refresh_token
         try:
